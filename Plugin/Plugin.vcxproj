@@ -108,14 +108,14 @@
       <PreprocessorDefinitions>RADPACK;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
-      <AdditionalIncludeDirectories>C:\Autodesk\ObjectARX\inc;C:\Autodesk\ObjectARX\inc-$(Platform);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>C:\Autodesk\ObjectARX26\inc;C:\Autodesk\ObjectARX26\inc-$(Platform);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalLibraryDirectories>C:\Autodesk\ObjectARX\lib;C:\Autodesk\ObjectARX\lib-$(Platform);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>accore.lib;acad.lib;acui24.lib;adui24.lib;acpal.lib;ac1st24.lib;acdb24.lib;acge24.lib;acgiapi.lib;acISMobj24.lib;rxapi.lib;%(AdditionalDependencies)</AdditionalDependencies>
-      <ModuleDefinitionFile>C:\Autodesk\ObjectARX\inc\AcRxDefault.def</ModuleDefinitionFile>
+      <AdditionalLibraryDirectories>C:\Autodesk\ObjectARX26\lib;C:\Autodesk\ObjectARX26\lib-$(Platform);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>accore.lib;acad.lib;acui25.lib;adui25.lib;acpal.lib;acdb25.lib;acge25.lib;acgiapi.lib;acISMobj25.lib;rxapi.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <ModuleDefinitionFile>C:\Autodesk\ObjectARX26\inc\AcRxDefault.def</ModuleDefinitionFile>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
