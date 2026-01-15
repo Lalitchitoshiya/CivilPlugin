@@ -134,10 +134,17 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="WSProToCivil3DPlugin.cpp" />
+    <ClCompile Include="Commands.cpp" />
+    <ClCompile Include="EntryPoint.cpp" />
+    <ClCompile Include="Inheritclassplugin.cpp" />
+    <ClCompile Include="WSProNodeEntity.cpp" />
   </ItemGroup>
   <ItemGroup>
     <Text Include="readme for POC plugin.txt" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="Commands.h" />
+    <ClInclude Include="WSProNodeEntity.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
