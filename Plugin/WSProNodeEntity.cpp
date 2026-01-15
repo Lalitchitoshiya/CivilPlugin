@@ -1,64 +1,3 @@
-//#include "aced.h"
-//#include "dbsymtb.h"
-//#include "dbapserv.h"
-//#include "acdb.h"
-//#include "WSProNodeEntity.h"
-//
-//void createWSProNode()
-//{
-//    // -------------------------------
-//    // Step A1 — Ask user for location
-//    // -------------------------------
-//    ads_point pt;
-//    if (acedGetPoint(nullptr, L"\nSpecify WS Pro node location: ", pt) != RTNORM)
-//        return;
-//
-//    // -------------------------------
-//    // Step A2 — Ask user for node type
-//    // -------------------------------
-//    ACHAR type[32];
-//    if (acedGetString(Adesk::kFalse,
-//        L"\nEnter node type [Valve/Junction]: ",
-//        type) != RTNORM)
-//        return;
-//
-//    // -------------------------------
-//    // Step A3 — Ask user for diameter
-//    // -------------------------------
-//    double dia = 0.0;
-//    if (acedGetReal(L"\nEnter diameter: ", &dia) != RTNORM || dia <= 0.0)
-//        return;
-//
-//    // -------------------------------
-//    // Create WS Pro Node Entity
-//    // -------------------------------
-//    WSProNodeEntity* pNode = new WSProNodeEntity();
-//
-//    pNode->setNodeId(L"USER_NODE");   // placeholder ID
-//    pNode->setNodeType(type);
-//    pNode->setDiameter(dia);
-//    pNode->setPosition(AcGePoint3d(pt[0], pt[1], pt[2]));
-//
-//    // -------------------------------
-//    // Append to ModelSpace
-//    // -------------------------------
-//    AcDbBlockTable* pBT = nullptr;
-//    acdbHostApplicationServices()
-//        ->workingDatabase()
-//        ->getBlockTable(pBT, AcDb::kForRead);
-//
-//    AcDbBlockTableRecord* pMS = nullptr;
-//    pBT->getAt(ACDB_MODEL_SPACE, pMS, AcDb::kForWrite);
-//
-//    AcDbObjectId id;
-//    pMS->appendAcDbEntity(id, pNode);
-//
-//    pNode->close();
-//    pMS->close();
-//    pBT->close();
-//}
-
-
 
 #include "WSProNodeEntity.h"
 
@@ -66,9 +5,6 @@
 #include "dbfiler.h"
 #include "rxregsvc.h"
 
-// --------------------------------------------------------------------------
-// Runtime type registration
-// --------------------------------------------------------------------------
 ACRX_DXF_DEFINE_MEMBERS(
     WSProNodeEntity,
     AcDbEntity,
@@ -79,113 +15,46 @@ ACRX_DXF_DEFINE_MEMBERS(
     WSProEntities
 )
 
-// --------------------------------------------------------------------------
-// Constructor / Destructor
-// --------------------------------------------------------------------------
 WSProNodeEntity::WSProNodeEntity()
     : m_position(AcGePoint3d::kOrigin),
     m_diameter(100.0)
 {
 }
 
-WSProNodeEntity::~WSProNodeEntity()
-{
-}
+WSProNodeEntity::~WSProNodeEntity() {}
 
-// --------------------------------------------------------------------------
-// Setters / Getters
-// --------------------------------------------------------------------------
-void WSProNodeEntity::setNodeId(const AcString& id)
-{
-    m_nodeId = id;
-}
+void WSProNodeEntity::setNodeId(const AcString& id) { m_nodeId = id; }
+AcString WSProNodeEntity::nodeId() const { return m_nodeId; }
 
-AcString WSProNodeEntity::nodeId() const
-{
-    return m_nodeId;
-}
+void WSProNodeEntity::setNodeType(const AcString& type) { m_nodeType = type; }
+AcString WSProNodeEntity::nodeType() const { return m_nodeType; }
 
-void WSProNodeEntity::setNodeType(const AcString& type)
-{
-    m_nodeType = type;
-}
+void WSProNodeEntity::setDiameter(double dia) { m_diameter = dia; }
+double WSProNodeEntity::diameter() const { return m_diameter; }
 
-AcString WSProNodeEntity::nodeType() const
-{
-    return m_nodeType;
-}
+void WSProNodeEntity::setPosition(const AcGePoint3d& pt) { m_position = pt; }
+AcGePoint3d WSProNodeEntity::position() const { return m_position; }
 
-void WSProNodeEntity::setDiameter(double dia)
-{
-    m_diameter = dia;
-}
-
-double WSProNodeEntity::diameter() const
-{
-    return m_diameter;
-}
-
-void WSProNodeEntity::setPosition(const AcGePoint3d& pt)
-{
-    m_position = pt;
-}
-
-AcGePoint3d WSProNodeEntity::position() const
-{
-    return m_position;
-}
-
-// --------------------------------------------------------------------------
-// Drawing logic (semantic visualization)
-// --------------------------------------------------------------------------
 Adesk::Boolean WSProNodeEntity::subWorldDraw(AcGiWorldDraw* wd)
 {
     AcGiGeometry* geom = &wd->geometry();
-    if (!geom)
-        return Adesk::kFalse;
+    if (!geom) return Adesk::kFalse;
 
-    // ------------------------------------------------------
-    // Color by node type (semantic meaning)
-    // ------------------------------------------------------
+    // Color by type
     if (m_nodeType == L"Valve")
-        wd->subEntityTraits().setColor(1);      // Red
+        wd->subEntityTraits().setColor(1); // red
     else if (m_nodeType == L"Junction")
-        wd->subEntityTraits().setColor(3);      // Green
+        wd->subEntityTraits().setColor(3); // green
     else
-        wd->subEntityTraits().setColor(7);      // White / default
+        wd->subEntityTraits().setColor(7); // white
 
-    // ------------------------------------------------------
-    // Shape by node type
-    // ------------------------------------------------------
-    if (m_nodeType == L"Valve")
-    {
-        geom->circle(
-            m_position,
-            m_diameter / 2.0,
-            AcGeVector3d::kZAxis
-        );
-    }
-    else if (m_nodeType == L"Junction")
-    {
-        geom->circle(
-            m_position,
-            m_diameter / 4.0,
-            AcGeVector3d::kZAxis
-        );
-    }
-    else
-    {
-        // Default fallback visualization
-        geom->circle(
-            m_position,
-            m_diameter / 3.0,
-            AcGeVector3d::kZAxis
-        );
-    }
+    double radius =
+        (m_nodeType == L"Valve") ? m_diameter / 2.0 :
+        (m_nodeType == L"Junction") ? m_diameter / 4.0 :
+        m_diameter / 3.0;
 
-    // ------------------------------------------------------
-    // Optional label (Node ID)
-    // ------------------------------------------------------
+    geom->circle(m_position, radius, AcGeVector3d::kZAxis);
+
     if (!m_nodeId.isEmpty())
     {
         geom->text(
@@ -193,7 +62,7 @@ Adesk::Boolean WSProNodeEntity::subWorldDraw(AcGiWorldDraw* wd)
             AcGeVector3d::kZAxis,
             AcGeVector3d::kXAxis,
             m_diameter / 3.0,
-            0.0,
+            1.0,
             0.0,
             m_nodeId.kwszPtr()
         );
@@ -202,22 +71,12 @@ Adesk::Boolean WSProNodeEntity::subWorldDraw(AcGiWorldDraw* wd)
     return Adesk::kTrue;
 }
 
-// --------------------------------------------------------------------------
-// Optional viewport-specific drawing (not used yet)
-// --------------------------------------------------------------------------
-void WSProNodeEntity::subViewportDraw(AcGiViewportDraw* /*vd*/)
-{
-    // Intentionally empty
-}
+void WSProNodeEntity::subViewportDraw(AcGiViewportDraw*) {}
 
-// --------------------------------------------------------------------------
-// DWG save (persistence)
-// --------------------------------------------------------------------------
 Acad::ErrorStatus WSProNodeEntity::dwgOutFields(AcDbDwgFiler* filer) const
 {
     Acad::ErrorStatus es = AcDbEntity::dwgOutFields(filer);
-    if (es != Acad::eOk)
-        return es;
+    if (es != Acad::eOk) return es;
 
     filer->writeString(m_nodeId);
     filer->writeString(m_nodeType);
@@ -227,14 +86,10 @@ Acad::ErrorStatus WSProNodeEntity::dwgOutFields(AcDbDwgFiler* filer) const
     return filer->filerStatus();
 }
 
-// --------------------------------------------------------------------------
-// DWG load (persistence)
-// --------------------------------------------------------------------------
 Acad::ErrorStatus WSProNodeEntity::dwgInFields(AcDbDwgFiler* filer)
 {
     Acad::ErrorStatus es = AcDbEntity::dwgInFields(filer);
-    if (es != Acad::eOk)
-        return es;
+    if (es != Acad::eOk) return es;
 
     filer->readString(m_nodeId);
     filer->readString(m_nodeType);
