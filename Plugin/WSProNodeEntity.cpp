@@ -27,6 +27,6 @@ AcGePoint3d WSProNodeEntity::position() const { return m_position; }
 
 Adesk::Boolean WSProNodeEntity::subWorldDraw(AcGiWorldDraw* wd)
 {
-    wd->geometry().circle(m_position, 1.0, AcGeVector3d::kZAxis);
+    wd->geometry().circle(m_position, 0.10, AcGeVector3d::kZAxis);
     return Adesk::kTrue;
 }
