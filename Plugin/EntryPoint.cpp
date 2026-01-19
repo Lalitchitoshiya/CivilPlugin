@@ -1,6 +1,9 @@
+
+
 #include "rxregsvc.h"
 #include "aced.h"
 
+// Custom entities
 #include "WSProNodeEntity.h"
 #include "WSProPipeEntity.h"
 
@@ -15,18 +18,22 @@ AcRx::AppRetCode acrxEntryPoint(AcRx::AppMsgCode msg, void* pkt)
         acrxUnlockApplication(pkt);
         acrxRegisterAppMDIAware(pkt);
 
+        // =========================================
+        // REGISTER CUSTOM ENTITIES (THIS WAS MISSING)
+        // =========================================
         WSProNodeEntity::rxInit();
         WSProPipeEntity::rxInit();
 
-        initCommands();
+        // Build runtime RTTI hierarchy
         acrxBuildClassHierarchy();
+
+        initCommands();
         break;
 
     case AcRx::kUnloadAppMsg:
         acedRegCmds->removeGroup(L"WSPRO_COMMANDS");
-        deleteAcRxClass(WSProPipeEntity::desc());
-        deleteAcRxClass(WSProNodeEntity::desc());
         break;
     }
+
     return AcRx::kRetOK;
 }
