@@ -8,7 +8,6 @@
 #include <sstream>
 #include <vector>
 #include <map>
-#include <string>
 
 // Custom entities
 #include "WSProNodeEntity.h"
@@ -17,18 +16,6 @@
 #ifndef RTNORM
 #define RTNORM 5100
 #endif
-
-/* ============================================================
-   Utility
-   ============================================================ */
-static std::string trim(const std::string& s)
-{
-    size_t b = s.find_first_not_of(" \t\r\n\"");
-    size_t e = s.find_last_not_of(" \t\r\n\"");
-    if (b == std::string::npos || e == std::string::npos)
-        return "";
-    return s.substr(b, e - b + 1);
-}
 
 /* ============================================================
    Forward declarations
@@ -57,55 +44,89 @@ void initCommands()
 }
 
 /* ============================================================
-   WSPROIMPORTNODES
-   CSV (header REQUIRED, order flexible):
-   NodeID,X,Y,Z,(optional NodeType)
+   Helper: Load nodes from CSV (NO entities created)
+   Expected CSV:
+   NODE_ID,X,Y,Z,...
    ============================================================ */
-void importWSProNodes()
+static bool loadNodesFromCSV(
+    const ACHAR* filePath,
+    std::map<AcString, AcGePoint3d>& nodeMap)
 {
-    resbuf rb;
-    if (acedGetFileD(
-        L"Select Node CSV",
-        nullptr,
-        L"csv",
-        0,
-        &rb) != RTNORM)
-    {
-        acutPrintf(L"\nCommand cancelled.");
-        return;
-    }
-
-    std::ifstream file(rb.resval.rstring);
+    std::ifstream file(filePath);
     if (!file.is_open())
-    {
-        acutPrintf(L"\nUnable to open node CSV.");
-        return;
-    }
-
-    AcDbBlockTable* bt = nullptr;
-    acdbHostApplicationServices()
-        ->workingDatabase()
-        ->getBlockTable(bt, AcDb::kForRead);
-
-    AcDbBlockTableRecord* ms = nullptr;
-    bt->getAt(ACDB_MODEL_SPACE, ms, AcDb::kForWrite);
+        return false;
 
     std::string line;
     std::getline(file, line); // header
 
-    int created = 0;
-    int skipped = 0;
+    while (std::getline(file, line))
+    {
+        std::stringstream ss(line);
+        std::vector<std::string> cols;
+        std::string col;
+
+        while (std::getline(ss, col, ','))
+            cols.push_back(col);
+
+        if (cols.size() < 4)
+            continue;
+
+        try
+        {
+            AcString nodeId(cols[0].c_str());
+            double x = std::stod(cols[1]);
+            double y = std::stod(cols[2]);
+            double z = std::stod(cols[3]);
+
+            nodeMap[nodeId] = AcGePoint3d(x, y, z);
+        }
+        catch (...)
+        {
+            continue;
+        }
+    }
+
+    file.close();
+    return !nodeMap.empty();
+}
+
+/* ============================================================
+   WSPROIMPORTNODES
+   CSV: NODE_ID,X,Y,Z,...
+   (UNCHANGED – creates node entities)
+   ============================================================ */
+void importWSProNodes()
+{
+    resbuf rb;
+    if (acedGetFileD(L"Select Node CSV", nullptr, L"csv", 0, &rb) != RTNORM)
+        return;
+
+    std::ifstream file(rb.resval.rstring);
+    if (!file.is_open())
+        return;
+
+    std::string line;
+    std::getline(file, line); // header
+
+    AcDbBlockTable* bt;
+    AcDbBlockTableRecord* ms;
+
+    acdbHostApplicationServices()->workingDatabase()
+        ->getBlockTable(bt, AcDb::kForRead);
+    bt->getAt(ACDB_MODEL_SPACE, ms, AcDb::kForWrite);
+
+    int created = 0, skipped = 0;
 
     while (std::getline(file, line))
     {
         std::stringstream ss(line);
-        std::vector<std::string> c;
+        std::vector<std::string> cols;
         std::string col;
 
         while (std::getline(ss, col, ','))
-            c.push_back(trim(col));
+            cols.push_back(col);
 
-        if (c.size() < 4)
+        if (cols.size() < 4)
         {
             skipped++;
             continue;
@@ -114,16 +135,12 @@ void importWSProNodes()
         try
         {
             WSProNodeEntity* node = new WSProNodeEntity();
-            node->setNodeId(AcString(c[0].c_str()));
+            node->setNodeId(AcString(cols[0].c_str()));
             node->setPosition(
                 AcGePoint3d(
-                    std::stod(c[1]),
-                    std::stod(c[2]),
-                    std::stod(c[3])));
-
-            // NodeType is OPTIONAL
-            if (c.size() > 4 && !c[4].empty())
-                node->setNodeType(AcString(c[4].c_str()));
+                    std::stod(cols[1]),
+                    std::stod(cols[2]),
+                    std::stod(cols[3])));
 
             ms->appendAcDbEntity(node);
             node->close();
@@ -135,9 +152,9 @@ void importWSProNodes()
         }
     }
 
-    file.close();
     ms->close();
     bt->close();
+    file.close();
 
     acutPrintf(
         L"\nNode import completed. Created: %d, Skipped: %d",
@@ -145,112 +162,108 @@ void importWSProNodes()
 }
 
 /* ============================================================
-   WSPROIMPORTPIPES
-   CSV (header REQUIRED):
-   PipeID,Diameter,US_Node,DS_Node
+   WSPROIMPORTPIPES (INDEPENDENT)
+   Uses TWO CSV files:
+   1) Node CSV → coordinates
+   2) Pipe CSV → connectivity
+
+   Pipe CSV (WS Pro):
+   ASSET_ID,DIAM_MM,MATERIAL,US_NODE,DS_NODE,UNIT_SYS
    ============================================================ */
-
-
 void importWSProPipes()
 {
-    // ----------------------------------------------------
-    // 1. Collect WSPro nodes from drawing
-    // ----------------------------------------------------
+    /* --------------------------------------------------------
+       STEP 1: Select NODE CSV (for coordinates)
+       -------------------------------------------------------- */
+    resbuf rbNode;
+    if (acedGetFileD(
+        L"Select WS Pro NODE CSV",
+        nullptr,
+        L"csv",
+        0,
+        &rbNode) != RTNORM)
+    {
+        acutPrintf(L"\nNode CSV selection cancelled.");
+        return;
+    }
+
     std::map<AcString, AcGePoint3d> nodeMap;
-
-    AcDbBlockTable* bt = nullptr;
-    acdbHostApplicationServices()->workingDatabase()
-        ->getBlockTable(bt, AcDb::kForRead);
-
-    AcDbBlockTableRecord* ms = nullptr;
-    bt->getAt(ACDB_MODEL_SPACE, ms, AcDb::kForRead);
-
-    AcDbBlockTableRecordIterator* it = nullptr;
-    ms->newIterator(it);
-
-    for (; !it->done(); it->step())
+    if (!loadNodesFromCSV(rbNode.resval.rstring, nodeMap))
     {
-        AcDbEntity* ent = nullptr;
-        it->getEntity(ent, AcDb::kForRead);
-
-        WSProNodeEntity* node = WSProNodeEntity::cast(ent);
-        if (node)
-        {
-            nodeMap[node->nodeId()] = node->position();
-        }
-
-        ent->close();
-    }
-
-    delete it;
-    ms->close();
-    bt->close();
-
-    if (nodeMap.empty())
-    {
-        acutPrintf(L"\nNo WSPro nodes found.");
+        acutPrintf(L"\nFailed to load nodes from CSV.");
         return;
     }
 
-    // ----------------------------------------------------
-    // 2. Select pipe CSV
-    // ----------------------------------------------------
-    resbuf rb;
-    if (acedGetFileD(L"Select WS Pro Pipe CSV", nullptr, L"csv", 0, &rb) != RTNORM)
-        return;
+    acutPrintf(L"\nLoaded %d nodes from CSV.", nodeMap.size());
 
-    std::ifstream file(rb.resval.rstring);
+    /* --------------------------------------------------------
+       STEP 2: Select PIPE CSV
+       -------------------------------------------------------- */
+    resbuf rbPipe;
+    if (acedGetFileD(
+        L"Select WS Pro PIPE CSV",
+        nullptr,
+        L"csv",
+        0,
+        &rbPipe) != RTNORM)
+    {
+        acutPrintf(L"\nPipe CSV selection cancelled.");
+        return;
+    }
+
+    std::ifstream file(rbPipe.resval.rstring);
     if (!file.is_open())
     {
         acutPrintf(L"\nFailed to open pipe CSV.");
         return;
     }
 
-    // ----------------------------------------------------
-    // 3. Skip header line (CONTENT IGNORED)
-    // ----------------------------------------------------
     std::string line;
-    std::getline(file, line); // header ignored completely
+    std::getline(file, line); // header
 
-    // ----------------------------------------------------
-    // 4. Create pipes
-    // Column mapping based on YOUR CSV:
-    // 0 = ASSET_ID
-    // 1 = DIAM_MM
-    // 3 = US_NODE
-    // 4 = DS_NODE
-    // ----------------------------------------------------
+    /* --------------------------------------------------------
+       STEP 3: Open ModelSpace for pipe creation
+       -------------------------------------------------------- */
+    AcDbBlockTable* bt;
+    AcDbBlockTableRecord* ms;
+
     acdbHostApplicationServices()->workingDatabase()
         ->getBlockTable(bt, AcDb::kForRead);
-
     bt->getAt(ACDB_MODEL_SPACE, ms, AcDb::kForWrite);
 
-    int created = 0;
-    int skipped = 0;
+    int created = 0, skipped = 0;
 
+    /* --------------------------------------------------------
+       STEP 4: Create pipes
+       Column mapping (fixed for WS Pro):
+       0 = ASSET_ID
+       1 = DIAM_MM
+       3 = US_NODE
+       4 = DS_NODE
+       -------------------------------------------------------- */
     while (std::getline(file, line))
     {
         std::stringstream ss(line);
-        std::vector<std::string> c;
+        std::vector<std::string> cols;
         std::string col;
 
         while (std::getline(ss, col, ','))
-            c.push_back(col);
+            cols.push_back(col);
 
-        if (c.size() < 5)
+        if (cols.size() < 5)
         {
             skipped++;
             continue;
         }
 
-        AcString pipeId(c[0].c_str());   // ASSET_ID
+        AcString pipeId(cols[0].c_str());
 
-        double diameter = 0.0;
-        try { diameter = std::stod(c[1]); }
+        double dia = 0.0;
+        try { dia = std::stod(cols[1]); }
         catch (...) {}
 
-        AcString us(c[3].c_str());       // US_NODE
-        AcString ds(c[4].c_str());       // DS_NODE
+        AcString us(cols[3].c_str());
+        AcString ds(cols[4].c_str());
 
         if (!nodeMap.count(us) || !nodeMap.count(ds))
         {
@@ -259,29 +272,32 @@ void importWSProPipes()
                 pipeId.constPtr(),
                 us.constPtr(),
                 ds.constPtr());
-
             skipped++;
             continue;
         }
 
+        // Flatten Z (current working behavior)
+        AcGePoint3d p1 = nodeMap[us];
+        AcGePoint3d p2 = nodeMap[ds];
+        p1.z = 0.0;
+        p2.z = 0.0;
+
         WSProPipeEntity* pipe = new WSProPipeEntity();
         pipe->setPipeId(pipeId);
-        pipe->setStartPoint(nodeMap[us]);
-        pipe->setEndPoint(nodeMap[ds]);
-        pipe->setDiameter(diameter);
+        pipe->setStartPoint(p1);
+        pipe->setEndPoint(p2);
+        pipe->setDiameter(dia);
 
         ms->appendAcDbEntity(pipe);
         pipe->close();
-
         created++;
     }
 
-    file.close();
     ms->close();
     bt->close();
+    file.close();
 
     acutPrintf(
         L"\nPipe import completed. Created: %d, Skipped: %d",
         created, skipped);
 }
-
