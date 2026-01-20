@@ -1,5 +1,3 @@
-
-
 #include "rxregsvc.h"
 #include "aced.h"
 
