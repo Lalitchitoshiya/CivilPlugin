@@ -1,5 +1,3 @@
-
-
 #include "WSProPipeEntity.h"
 #include "rxregsvc.h"
 
