@@ -44,9 +44,8 @@ void initCommands()
 }
 
 /* ============================================================
-   Helper: Load nodes from CSV (NO entities created)
-   Expected CSV:
-   NODE_ID,X,Y,Z,...
+   Helper: Load nodes from CSV (NO entities created here)
+   CSV: NODE_ID,X,Y,Z,...
    ============================================================ */
 static bool loadNodesFromCSV(
     const ACHAR* filePath,
@@ -90,11 +89,8 @@ static bool loadNodesFromCSV(
     return !nodeMap.empty();
 }
 
-
 /* ============================================================
-   WSPROIMPORTNODES
-   CSV: NODE_ID,X,Y,Z,...
-   (UNCHANGED – creates node entities)
+   WSPROIMPORTNODES (UNCHANGED)
    ============================================================ */
 void importWSProNodes()
 {
@@ -162,12 +158,20 @@ void importWSProNodes()
         created, skipped);
 }
 
+/* ============================================================
+   WSPROIMPORTPIPES (INDEPENDENT + 3D SAFE)
+   Uses:
+   1) Node CSV → coordinates (WITH Z)
+   2) Pipe CSV → connectivity
 
+   Pipe CSV:
+   ASSET_ID,DIAM_MM,MATERIAL,US_NODE,DS_NODE,UNIT_SYS
+   ============================================================ */
 void importWSProPipes()
 {
-    /* =====================================================
+    /* --------------------------------------------------------
        STEP 1: Select NODE CSV
-       ===================================================== */
+       -------------------------------------------------------- */
     resbuf rbNode;
     if (acedGetFileD(
         L"Select WS Pro NODE CSV",
@@ -175,10 +179,7 @@ void importWSProPipes()
         L"csv",
         0,
         &rbNode) != RTNORM)
-    {
-        acutPrintf(L"\nNode CSV selection cancelled.");
         return;
-    }
 
     std::map<AcString, AcGePoint3d> nodeMap;
     if (!loadNodesFromCSV(rbNode.resval.rstring, nodeMap))
@@ -189,9 +190,9 @@ void importWSProPipes()
 
     acutPrintf(L"\nLoaded %d nodes from CSV.", nodeMap.size());
 
-    /* =====================================================
-       STEP 2: Create NODE ENTITIES (VISUALIZATION)
-       ===================================================== */
+    /* --------------------------------------------------------
+       STEP 2: Create NODE ENTITIES (visualization)
+       -------------------------------------------------------- */
     AcDbBlockTable* bt;
     AcDbBlockTableRecord* ms;
 
@@ -203,12 +204,9 @@ void importWSProPipes()
 
     for (const auto& kv : nodeMap)
     {
-        AcGePoint3d pos = kv.second;
-        pos.z = 0.0; // flatten for plan view
-
         WSProNodeEntity* node = new WSProNodeEntity();
         node->setNodeId(kv.first);
-        node->setPosition(pos);
+        node->setPosition(kv.second); // Z preserved
 
         ms->appendAcDbEntity(node);
         node->close();
@@ -218,11 +216,11 @@ void importWSProPipes()
     ms->close();
     bt->close();
 
-    acutPrintf(L"\nNodes created: %d", nodesCreated);
+    acutPrintf(L"\nNodes visualized: %d", nodesCreated);
 
-    /* =====================================================
+    /* --------------------------------------------------------
        STEP 3: Select PIPE CSV
-       ===================================================== */
+       -------------------------------------------------------- */
     resbuf rbPipe;
     if (acedGetFileD(
         L"Select WS Pro PIPE CSV",
@@ -230,32 +228,23 @@ void importWSProPipes()
         L"csv",
         0,
         &rbPipe) != RTNORM)
-    {
-        acutPrintf(L"\nPipe CSV selection cancelled.");
         return;
-    }
 
     std::ifstream file(rbPipe.resval.rstring);
     if (!file.is_open())
-    {
-        acutPrintf(L"\nFailed to open pipe CSV.");
         return;
-    }
 
     std::string line;
     std::getline(file, line); // header
 
-    /* =====================================================
-       STEP 4: Create PIPES
-       Pipe CSV (WS Pro):
-       ASSET_ID,DIAM_MM,MATERIAL,US_NODE,DS_NODE,UNIT_SYS
-       ===================================================== */
+    /* --------------------------------------------------------
+       STEP 4: Create pipes (TRUE 3D)
+       -------------------------------------------------------- */
     acdbHostApplicationServices()->workingDatabase()
         ->getBlockTable(bt, AcDb::kForRead);
     bt->getAt(ACDB_MODEL_SPACE, ms, AcDb::kForWrite);
 
-    int pipesCreated = 0;
-    int pipesSkipped = 0;
+    int created = 0, skipped = 0;
 
     while (std::getline(file, line))
     {
@@ -268,7 +257,7 @@ void importWSProPipes()
 
         if (cols.size() < 5)
         {
-            pipesSkipped++;
+            skipped++;
             continue;
         }
 
@@ -282,29 +271,19 @@ void importWSProPipes()
 
         if (!nodeMap.count(us) || !nodeMap.count(ds))
         {
-            acutPrintf(
-                L"\nSkipping pipe %ls (US=%ls DS=%ls)",
-                pipeId.constPtr(),
-                us.constPtr(),
-                ds.constPtr());
-            pipesSkipped++;
+            skipped++;
             continue;
         }
 
-        AcGePoint3d p1 = nodeMap[us];
-        AcGePoint3d p2 = nodeMap[ds];
-        p1.z = 0.0;
-        p2.z = 0.0;
-
         WSProPipeEntity* pipe = new WSProPipeEntity();
         pipe->setPipeId(pipeId);
-        pipe->setStartPoint(p1);
-        pipe->setEndPoint(p2);
+        pipe->setStartPoint(nodeMap[us]); // Z preserved
+        pipe->setEndPoint(nodeMap[ds]);   // Z preserved
         pipe->setDiameter(dia);
 
         ms->appendAcDbEntity(pipe);
         pipe->close();
-        pipesCreated++;
+        created++;
     }
 
     ms->close();
@@ -313,5 +292,5 @@ void importWSProPipes()
 
     acutPrintf(
         L"\nPipe import completed. Created: %d, Skipped: %d",
-        pipesCreated, pipesSkipped);
+        created, skipped);
 }
