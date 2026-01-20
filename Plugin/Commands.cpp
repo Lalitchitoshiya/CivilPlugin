@@ -90,6 +90,7 @@ static bool loadNodesFromCSV(
     return !nodeMap.empty();
 }
 
+
 /* ============================================================
    WSPROIMPORTNODES
    CSV: NODE_ID,X,Y,Z,...
@@ -161,20 +162,12 @@ void importWSProNodes()
         created, skipped);
 }
 
-/* ============================================================
-   WSPROIMPORTPIPES (INDEPENDENT)
-   Uses TWO CSV files:
-   1) Node CSV → coordinates
-   2) Pipe CSV → connectivity
 
-   Pipe CSV (WS Pro):
-   ASSET_ID,DIAM_MM,MATERIAL,US_NODE,DS_NODE,UNIT_SYS
-   ============================================================ */
 void importWSProPipes()
 {
-    /* --------------------------------------------------------
-       STEP 1: Select NODE CSV (for coordinates)
-       -------------------------------------------------------- */
+    /* =====================================================
+       STEP 1: Select NODE CSV
+       ===================================================== */
     resbuf rbNode;
     if (acedGetFileD(
         L"Select WS Pro NODE CSV",
@@ -196,9 +189,40 @@ void importWSProPipes()
 
     acutPrintf(L"\nLoaded %d nodes from CSV.", nodeMap.size());
 
-    /* --------------------------------------------------------
-       STEP 2: Select PIPE CSV
-       -------------------------------------------------------- */
+    /* =====================================================
+       STEP 2: Create NODE ENTITIES (VISUALIZATION)
+       ===================================================== */
+    AcDbBlockTable* bt;
+    AcDbBlockTableRecord* ms;
+
+    acdbHostApplicationServices()->workingDatabase()
+        ->getBlockTable(bt, AcDb::kForRead);
+    bt->getAt(ACDB_MODEL_SPACE, ms, AcDb::kForWrite);
+
+    int nodesCreated = 0;
+
+    for (const auto& kv : nodeMap)
+    {
+        AcGePoint3d pos = kv.second;
+        pos.z = 0.0; // flatten for plan view
+
+        WSProNodeEntity* node = new WSProNodeEntity();
+        node->setNodeId(kv.first);
+        node->setPosition(pos);
+
+        ms->appendAcDbEntity(node);
+        node->close();
+        nodesCreated++;
+    }
+
+    ms->close();
+    bt->close();
+
+    acutPrintf(L"\nNodes created: %d", nodesCreated);
+
+    /* =====================================================
+       STEP 3: Select PIPE CSV
+       ===================================================== */
     resbuf rbPipe;
     if (acedGetFileD(
         L"Select WS Pro PIPE CSV",
@@ -221,26 +245,18 @@ void importWSProPipes()
     std::string line;
     std::getline(file, line); // header
 
-    /* --------------------------------------------------------
-       STEP 3: Open ModelSpace for pipe creation
-       -------------------------------------------------------- */
-    AcDbBlockTable* bt;
-    AcDbBlockTableRecord* ms;
-
+    /* =====================================================
+       STEP 4: Create PIPES
+       Pipe CSV (WS Pro):
+       ASSET_ID,DIAM_MM,MATERIAL,US_NODE,DS_NODE,UNIT_SYS
+       ===================================================== */
     acdbHostApplicationServices()->workingDatabase()
         ->getBlockTable(bt, AcDb::kForRead);
     bt->getAt(ACDB_MODEL_SPACE, ms, AcDb::kForWrite);
 
-    int created = 0, skipped = 0;
+    int pipesCreated = 0;
+    int pipesSkipped = 0;
 
-    /* --------------------------------------------------------
-       STEP 4: Create pipes
-       Column mapping (fixed for WS Pro):
-       0 = ASSET_ID
-       1 = DIAM_MM
-       3 = US_NODE
-       4 = DS_NODE
-       -------------------------------------------------------- */
     while (std::getline(file, line))
     {
         std::stringstream ss(line);
@@ -252,12 +268,11 @@ void importWSProPipes()
 
         if (cols.size() < 5)
         {
-            skipped++;
+            pipesSkipped++;
             continue;
         }
 
         AcString pipeId(cols[0].c_str());
-
         double dia = 0.0;
         try { dia = std::stod(cols[1]); }
         catch (...) {}
@@ -272,11 +287,10 @@ void importWSProPipes()
                 pipeId.constPtr(),
                 us.constPtr(),
                 ds.constPtr());
-            skipped++;
+            pipesSkipped++;
             continue;
         }
 
-        // Flatten Z (current working behavior)
         AcGePoint3d p1 = nodeMap[us];
         AcGePoint3d p2 = nodeMap[ds];
         p1.z = 0.0;
@@ -290,7 +304,7 @@ void importWSProPipes()
 
         ms->appendAcDbEntity(pipe);
         pipe->close();
-        created++;
+        pipesCreated++;
     }
 
     ms->close();
@@ -299,5 +313,5 @@ void importWSProPipes()
 
     acutPrintf(
         L"\nPipe import completed. Created: %d, Skipped: %d",
-        created, skipped);
+        pipesCreated, pipesSkipped);
 }
