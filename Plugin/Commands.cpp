@@ -48,7 +48,7 @@ void initCommands()
    CSV: NODE_ID,X,Y,Z,...
    ============================================================ */
 static bool loadNodesFromCSV(
-    const ACHAR* filePath,
+	const ACHAR* filePath,                              //file path from dialog
     std::map<AcString, AcGePoint3d>& nodeMap)
 {
     std::ifstream file(filePath);
@@ -95,12 +95,12 @@ static bool loadNodesFromCSV(
 void importWSProNodes()
 {
     resbuf rb;
-    if (acedGetFileD(L"Select Node CSV", nullptr, L"csv", 0, &rb) != RTNORM)
+	if (acedGetFileD(L"Select Node CSV", nullptr, L"csv", 0, &rb) != RTNORM)      // dialouge box to select file
         return;
 
     std::ifstream file(rb.resval.rstring);
     if (!file.is_open())
-        return;
+        return;    
 
     std::string line;
     std::getline(file, line); // header
@@ -114,16 +114,16 @@ void importWSProNodes()
 
     int created = 0, skipped = 0;
 
-    while (std::getline(file, line))
+    while (std::getline(file, line))            //processing each data row
     {
         std::stringstream ss(line);
-        std::vector<std::string> cols;
+        std::vector<std::string> cols;           //SPLIT CSV ROW INTO COLUMNS
         std::string col;
 
-        while (std::getline(ss, col, ','))
+		while (std::getline(ss, col, ','))        
             cols.push_back(col);
 
-        if (cols.size() < 4)
+        if (cols.size() < 4)                //VALIDATE REQUIRED DATA
         {
             skipped++;
             continue;
@@ -131,7 +131,7 @@ void importWSProNodes()
 
         try
         {
-            WSProNodeEntity* node = new WSProNodeEntity();
+            WSProNodeEntity* node = new WSProNodeEntity();     //CREATE NODE ENTITY (CORE LOGIC)
             node->setNodeId(AcString(cols[0].c_str()));
             node->setPosition(
                 AcGePoint3d(
@@ -139,22 +139,22 @@ void importWSProNodes()
                     std::stod(cols[2]),
                     std::stod(cols[3])));
 
-            ms->appendAcDbEntity(node);
+            ms->appendAcDbEntity(node);                     //APPEND NODE TO MODELSPACE
             node->close();
             created++;
-        }
+		}                                                    //Error handling
         catch (...)
         {
             skipped++;
         }
     }
 
-    ms->close();
+    ms->close();                                                //CLEANUP RESOURCES
     bt->close();
     file.close();
 
     acutPrintf(
-        L"\nNode import completed. Created: %d, Skipped: %d",
+        L"\nNode import completed. Created: %d, Skipped: %d",      //USER FEEDBACK
         created, skipped);
 }
 
@@ -172,7 +172,7 @@ void importWSProPipes()
     /* --------------------------------------------------------
        STEP 1: Select NODE CSV
        -------------------------------------------------------- */
-    resbuf rbNode;
+    resbuf rbNode;                                                  //Select NODE CSV (Source of Geometry)
     if (acedGetFileD(
         L"Select WS Pro NODE CSV",
         nullptr,
@@ -181,8 +181,8 @@ void importWSProPipes()
         &rbNode) != RTNORM)
         return;
 
-    std::map<AcString, AcGePoint3d> nodeMap;
-    if (!loadNodesFromCSV(rbNode.resval.rstring, nodeMap))
+	std::map<AcString, AcGePoint3d> nodeMap;                       
+    if (!loadNodesFromCSV(rbNode.resval.rstring, nodeMap))              //call the load function to read nodes from CSV & Builds an in-memory lookup table:
     {
         acutPrintf(L"\nFailed to load nodes from CSV.");
         return;
@@ -222,7 +222,7 @@ void importWSProPipes()
        STEP 3: Select PIPE CSV
        -------------------------------------------------------- */
     resbuf rbPipe;
-    if (acedGetFileD(
+	if (acedGetFileD(                              //dialouge box to select file
         L"Select WS Pro PIPE CSV",
         nullptr,
         L"csv",
@@ -230,18 +230,18 @@ void importWSProPipes()
         &rbPipe) != RTNORM)
         return;
 
-    std::ifstream file(rbPipe.resval.rstring);
+    std::ifstream file(rbPipe.resval.rstring);          // file path stored here
     if (!file.is_open())
         return;
 
     std::string line;
-    std::getline(file, line); // header
+    std::getline(file, line); // read csv file line by line
 
     /* --------------------------------------------------------
        STEP 4: Create pipes (TRUE 3D)
        -------------------------------------------------------- */
-    acdbHostApplicationServices()->workingDatabase()
-        ->getBlockTable(bt, AcDb::kForRead);
+    acdbHostApplicationServices()->workingDatabase()     //Get the current drawing database
+        ->getBlockTable(bt, AcDb::kForRead);                //Open the Block Table (read-only)
     bt->getAt(ACDB_MODEL_SPACE, ms, AcDb::kForWrite);
 
     int created = 0, skipped = 0;
