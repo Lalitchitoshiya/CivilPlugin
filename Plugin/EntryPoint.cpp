@@ -19,11 +19,11 @@ AcRx::AppRetCode acrxEntryPoint(AcRx::AppMsgCode msg, void* pkt)
         // =========================================
         // REGISTER CUSTOM ENTITIES (THIS WAS MISSING)
         // =========================================
-        WSProNodeEntity::rxInit();
-        WSProPipeEntity::rxInit();
+      //  WSProNodeEntity::rxInit();
+        //WSProPipeEntity::rxInit();
 
         // Build runtime RTTI hierarchy
-        acrxBuildClassHierarchy();
+        //acrxBuildClassHierarchy();
 
         initCommands();
         break;

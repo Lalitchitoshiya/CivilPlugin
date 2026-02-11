@@ -136,16 +136,12 @@
   <ItemGroup>
     <ClCompile Include="Commands.cpp" />
     <ClCompile Include="EntryPoint.cpp" />
-    <ClCompile Include="WSProNodeEntity.cpp" />
-    <ClCompile Include="WSProPipeEntity.cpp" />
   </ItemGroup>
   <ItemGroup>
     <Text Include="readme for POC plugin.txt" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Commands.h" />
-    <ClInclude Include="WSProNodeEntity.h" />
-    <ClInclude Include="WSProPipeEntity.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
