@@ -2,31 +2,25 @@
 #include "acedads.h"
 #include "dbsymtb.h"
 #include "dbapserv.h"
-#include "acutads.h"
 #include "dbents.h"
 //#include "dbline.h"
-//#include "dbregapp.h"
+#include "dbpl.h"
 
 #include <fstream>
 #include <sstream>
 #include <vector>
 #include <map>
+#include <cmath>
 
 #ifndef RTNORM
 #define RTNORM 5100
 #endif
 
-#ifndef RTNONE
-#define RTNONE 5000
-#endif
-
-#define WSPRO_APP L"WSPRO"
-
 /* ============================================================
    Forward declarations
    ============================================================ */
+void importWSProNodes();
 void importWSProPipes();
-void registerAppName(const wchar_t* appName);
 
 /* ============================================================
    Command registration
@@ -35,35 +29,17 @@ void initCommands()
 {
     acedRegCmds->addCommand(
         L"WSPRO_COMMANDS",
+        L"WSPROIMPORTNODES",
+        L"WSPROIMPORTNODES",
+        ACRX_CMD_MODAL,
+        importWSProNodes);
+
+    acedRegCmds->addCommand(
+        L"WSPRO_COMMANDS",
         L"WSPROIMPORTPIPES",
         L"WSPROIMPORTPIPES",
         ACRX_CMD_MODAL,
         importWSProPipes);
-}
-
-/* ============================================================
-   Register RegApp (Required for XData)
-   ============================================================ */
-void registerAppName(const wchar_t* appName)
-{
-    AcDbDatabase* db = acdbHostApplicationServices()->workingDatabase();
-
-    AcDbRegAppTable* regTable;
-    db->getRegAppTable(regTable, AcDb::kForRead);
-
-    if (!regTable->has(appName))
-    {
-        regTable->upgradeOpen();
-
-        AcDbRegAppTableRecord* regRecord =
-            new AcDbRegAppTableRecord;
-        regRecord->setName(appName);
-
-        regTable->add(regRecord);
-        regRecord->close();
-    }
-
-    regTable->close();
 }
 
 /* ============================================================
@@ -109,14 +85,11 @@ static bool loadNodesFromCSV(
 }
 
 /* ============================================================
-   IMPORT PIPE COMMAND
+   WSPROIMPORTNODES
+   Creates 0.1m diameter polyline circles
    ============================================================ */
-void importWSProPipes()
+void importWSProNodes()
 {
-    // STEP 1: Register XData app
-    registerAppName(WSPRO_APP);
-
-    // STEP 2: Select NODE CSV
     resbuf rbNode;
     if (acedGetFileD(L"Select WS Pro NODE CSV", nullptr, L"csv", 0, &rbNode) != RTNORM)
         return;
@@ -128,17 +101,62 @@ void importWSProPipes()
         return;
     }
 
-    // STEP 3: Select PIPE CSV
-    resbuf rbPipe;
-    if (acedGetFileD(L"Select WS Pro PIPE CSV", nullptr, L"csv", 0, &rbPipe) != RTNORM)
+    AcDbDatabase* db = acdbHostApplicationServices()->workingDatabase();
+    AcDbBlockTable* bt;
+    AcDbBlockTableRecord* ms;
+
+    db->getBlockTable(bt, AcDb::kForRead);
+    bt->getAt(ACDB_MODEL_SPACE, ms, AcDb::kForWrite);
+
+    const double radius = 0.05;      // 0.1m diameter
+    const int segments = 16;         // smoothness
+
+    int created = 0;
+
+    for (const auto& kv : nodeMap)
+    {
+        AcDbPolyline* pl = new AcDbPolyline(segments);
+
+        for (int i = 0; i < segments; ++i)
+        {
+            double angle = (2.0 * 3.141592653589793 * i) / segments;
+
+            double x = kv.second.x + radius * cos(angle);
+            double y = kv.second.y + radius * sin(angle);
+
+            pl->addVertexAt(i, AcGePoint2d(x, y));
+        }
+
+        pl->setClosed(true);
+
+        ms->appendAcDbEntity(pl);
+        pl->close();
+
+        created++;
+    }
+
+    ms->close();
+    bt->close();
+
+    acutPrintf(L"\nNodes imported as 0.1m diameter circles: %d", created);
+}
+
+/* ============================================================
+   WSPROIMPORTPIPES
+   Creates native lines between nodes
+   ============================================================ */
+void importWSProPipes()
+{
+    resbuf rbNode;
+    if (acedGetFileD(L"Select WS Pro NODE CSV", nullptr, L"csv", 0, &rbNode) != RTNORM)
         return;
 
-    std::ifstream file(rbPipe.resval.rstring);
-    if (!file.is_open())
+    std::map<AcString, AcGePoint3d> nodeMap;
+    if (!loadNodesFromCSV(rbNode.resval.rstring, nodeMap))
+    {
+        acutPrintf(L"\nFailed to load nodes.");
         return;
-
-    std::string line;
-    std::getline(file, line); // header
+    }
 
     AcDbDatabase* db = acdbHostApplicationServices()->workingDatabase();
     AcDbBlockTable* bt;
@@ -146,6 +164,54 @@ void importWSProPipes()
 
     db->getBlockTable(bt, AcDb::kForRead);
     bt->getAt(ACDB_MODEL_SPACE, ms, AcDb::kForWrite);
+
+    /* ==============================
+       STEP 1: Create Node Circles
+       ============================== */
+    const double radius = 0.05;  // 0.1m diameter
+    const int segments = 16;
+
+    for (const auto& kv : nodeMap)
+    {
+        AcDbPolyline* pl = new AcDbPolyline(segments);
+
+        for (int i = 0; i < segments; ++i)
+        {
+            double angle = (2.0 * 3.141592653589793 * i) / segments;
+
+            double x = kv.second.x + radius * cos(angle);
+            double y = kv.second.y + radius * sin(angle);
+
+            pl->addVertexAt(i, AcGePoint2d(x, y));
+        }
+
+        pl->setClosed(true);
+
+        ms->appendAcDbEntity(pl);
+        pl->close();
+    }
+
+    /* ==============================
+       STEP 2: Select Pipe CSV
+       ============================== */
+    resbuf rbPipe;
+    if (acedGetFileD(L"Select WS Pro PIPE CSV", nullptr, L"csv", 0, &rbPipe) != RTNORM)
+    {
+        ms->close();
+        bt->close();
+        return;
+    }
+
+    std::ifstream file(rbPipe.resval.rstring);
+    if (!file.is_open())
+    {
+        ms->close();
+        bt->close();
+        return;
+    }
+
+    std::string line;
+    std::getline(file, line); // header
 
     int created = 0, skipped = 0;
 
@@ -166,8 +232,6 @@ void importWSProPipes()
 
         try
         {
-            AcString pipeId(cols[0].c_str());
-            double dia = std::stod(cols[1]);
             AcString us(cols[3].c_str());
             AcString ds(cols[4].c_str());
 
@@ -177,20 +241,9 @@ void importWSProPipes()
                 continue;
             }
 
-            // Create native AutoCAD Line
             AcDbLine* pipe = new AcDbLine(
                 nodeMap[us],
                 nodeMap[ds]);
-
-            // Attach XData
-            resbuf* rb = acutBuildList(
-                AcDb::kDxfRegAppName, WSPRO_APP,
-                AcDb::kDxfXdAsciiString, pipeId.kwszPtr(),
-                AcDb::kDxfXdReal, dia,
-                0);
-
-            pipe->setXData(rb);
-            acutRelRb(rb);
 
             ms->appendAcDbEntity(pipe);
             pipe->close();
@@ -203,10 +256,10 @@ void importWSProPipes()
         }
     }
 
+    file.close();
     ms->close();
     bt->close();
-    file.close();
 
-    acutPrintf(L"\nPipe import complete. Created: %d, Skipped: %d",
+    acutPrintf(L"\nNodes + Pipes imported. Pipes: %d, Skipped: %d",
         created, skipped);
 }
