@@ -134,14 +134,51 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="Civil3D_NetworkCreator.cpp" />
+    <ClCompile Include="Civil3D_NodeCreator.cpp" />
+    <ClCompile Include="Civil3D_PartResolver.cpp" />
+    <ClCompile Include="Civil3D_PipeCreator.cpp" />
     <ClCompile Include="Commands.cpp" />
+    <ClCompile Include="Command_CreateProfile.cpp" />
+    <ClCompile Include="Command_ImportNetwork.cpp" />
+    <ClCompile Include="Command_ImportNodes.cpp" />
+    <ClCompile Include="Command_ImportPipes.cpp" />
+    <ClCompile Include="Command_ValidateNetwork.cpp" />
     <ClCompile Include="EntryPoint.cpp" />
+    <ClCompile Include="Import_CSVParser.cpp" />
+    <ClCompile Include="Import_NetworkImporter.cpp" />
+    <ClCompile Include="Import_NodeImporter.cpp" />
+    <ClCompile Include="Import_PipeImporter.cpp" />
+    <ClCompile Include="Logging_ImportReportGenerator.cpp" />
+    <ClCompile Include="Logging_Logger.cpp" />
+    <ClCompile Include="Mapping_ConfigLoader.cpp" />
+    <ClCompile Include="Mapping_PartMappingEngine.cpp" />
+    <ClCompile Include="Utils_FileUtils.cpp" />
+    <ClCompile Include="Utils_GeometryUtils.cpp" />
+    <ClCompile Include="Utils_StringUtils.cpp" />
   </ItemGroup>
   <ItemGroup>
     <Text Include="readme for POC plugin.txt" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="Civil3D_NetworkCreator.h" />
+    <ClInclude Include="Civil3D_NodeCreator.h" />
+    <ClInclude Include="Civil3D_TransactionManager.h" />
     <ClInclude Include="Commands.h" />
+    <ClInclude Include="Domain_Enums.h" />
+    <ClInclude Include="Domain_WSNetwork.h" />
+    <ClInclude Include="Domain_WSNode.h" />
+    <ClInclude Include="Domain_WSPipe.h" />
+    <ClInclude Include="EntryPoint.h" />
+    <ClInclude Include="Import_CSVParser.h" />
+    <ClInclude Include="Import_NetworkImporter.h" />
+    <ClInclude Include="Import_NodeImporter.h" />
+    <ClInclude Include="Import_PipeImporter.h" />
+    <ClInclude Include="Logging_Logger.h" />
+    <ClInclude Include="Mapping_Models.h" />
+    <ClInclude Include="Mapping_PartMappingEngine.h" />
+    <ClInclude Include="Utils_StringUtils.h" />
+    <ClInclude Include="Utils_UnitConverter.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
