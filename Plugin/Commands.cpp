@@ -219,7 +219,7 @@ void importWSProPipes()
     {
         std::stringstream ss(line);
         std::vector<std::string> cols;
-        std::string col;
+        std::string col;    
 
         while (std::getline(ss, col, ','))
             cols.push_back(col);
