@@ -6,25 +6,19 @@
 #include "dbapserv.h"
 #include "aced.h"
 
-#include <Windows.h>
-
 #include <vector>
 #include <string>
 
 void cmdImportPipes()
 {
-    wchar_t filepath[MAX_PATH];
+    wchar_t filepath[512];
 
-    int result = acedGetFileD(
-        L"Select Pipe CSV",
-        NULL,
-        L"csv",
+    if (acedGetString(
         0,
-        filepath);
-
-    if (result != 5100)
+        L"\nEnter full path of Pipe CSV file: ",
+        filepath) != Acad::eOk)
     {
-        acutPrintf(L"\nFile selection cancelled.");
+        acutPrintf(L"\nFile input cancelled.");
         return;
     }
 
@@ -46,27 +40,22 @@ void cmdImportPipes()
 
     AcDbBlockTableRecord* pModelSpace = nullptr;
     pBlockTable->getAt(ACDB_MODEL_SPACE, pModelSpace, AcDb::kForWrite);
-
     pBlockTable->close();
 
     for (size_t i = 1; i < rows.size(); ++i)
     {
-        auto& r = rows[i];
-
-        // Expecting:
-        // ID,StartNodeID,X1,Y1,Z1,X2,Y2,Z2
-        if (r.size() < 8)
+        if (rows[i].size() < 8)
             continue;
 
         try
         {
-            double x1 = std::stod(r[2]);
-            double y1 = std::stod(r[3]);
-            double z1 = std::stod(r[4]);
+            double x1 = std::stod(rows[i][2]);
+            double y1 = std::stod(rows[i][3]);
+            double z1 = std::stod(rows[i][4]);
 
-            double x2 = std::stod(r[5]);
-            double y2 = std::stod(r[6]);
-            double z2 = std::stod(r[7]);
+            double x2 = std::stod(rows[i][5]);
+            double y2 = std::stod(rows[i][6]);
+            double z2 = std::stod(rows[i][7]);
 
             AcDbLine* pLine = new AcDbLine(
                 AcGePoint3d(x1, y1, z1),

@@ -6,27 +6,19 @@
 #include "dbapserv.h"
 #include "aced.h"
 
-#include <Windows.h>
-
 #include <vector>
 #include <string>
 
 void cmdImportNodes()
 {
-    wchar_t filepath[MAX_PATH];
+    wchar_t filepath[512];
 
-    int acedGetFileD(
-        const ACHAR * prompt,
-        const ACHAR * def,
-        const ACHAR * ext,
-        int flags,
-        resbuf * rb
-    );
-
-    // 5100 == RTNORM (success)
-    if (result != 5100)
+    if (acedGetString(
+        0,
+        L"\nEnter full path of Node CSV file: ",
+        filepath) != Acad::eOk)
     {
-        acutPrintf(L"\nFile selection cancelled.");
+        acutPrintf(L"\nFile input cancelled.");
         return;
     }
 
@@ -48,21 +40,18 @@ void cmdImportNodes()
 
     AcDbBlockTableRecord* pModelSpace = nullptr;
     pBlockTable->getAt(ACDB_MODEL_SPACE, pModelSpace, AcDb::kForWrite);
-
     pBlockTable->close();
 
     for (size_t i = 1; i < rows.size(); ++i)
     {
-        auto& r = rows[i];
-
-        if (r.size() < 4)
+        if (rows[i].size() < 4)
             continue;
 
         try
         {
-            double x = std::stod(r[1]);
-            double y = std::stod(r[2]);
-            double z = std::stod(r[3]);
+            double x = std::stod(rows[i][1]);
+            double y = std::stod(rows[i][2]);
+            double z = std::stod(rows[i][3]);
 
             AcDbPoint* pPoint = new AcDbPoint(AcGePoint3d(x, y, z));
             pModelSpace->appendAcDbEntity(pPoint);
@@ -70,12 +59,10 @@ void cmdImportNodes()
         }
         catch (...)
         {
-            // Skip invalid numeric rows
             continue;
         }
     }
 
     pModelSpace->close();
-
     acutPrintf(L"\nNodes imported successfully.");
 }
