@@ -1,5 +1,9 @@
+#include <Windows.h>
+#include <commdlg.h>
+
 #include "Domain_WSPipe.h"
 #include "Import_CSVParser.h"
+#include "Global_Data.h"
 
 #include "dbsymtb.h"
 #include "dbents.h"
@@ -11,18 +15,31 @@
 
 void cmdImportPipes()
 {
-    wchar_t filepath[512];
-
-    if (acedGetString(
-        0,
-        L"\nEnter full path of Pipe CSV file: ",
-        filepath) != Acad::eOk)
+    if (g_NodeMap.empty())
     {
-        acutPrintf(L"\nFile input cancelled.");
+        acutPrintf(L"\nNo nodes found. Import nodes first.");
         return;
     }
 
-    std::wstring ws(filepath);
+    wchar_t filePath[MAX_PATH] = { 0 };
+
+    OPENFILENAMEW ofn;
+    ZeroMemory(&ofn, sizeof(ofn));
+
+    ofn.lStructSize = sizeof(ofn);
+    ofn.lpstrFilter = L"CSV Files (*.csv)\0*.csv\0All Files (*.*)\0*.*\0";
+    ofn.lpstrFile = filePath;
+    ofn.nMaxFile = MAX_PATH;
+    ofn.Flags = OFN_EXPLORER | OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
+    ofn.lpstrTitle = L"Select Pipe CSV File";
+
+    if (!GetOpenFileNameW(&ofn))
+    {
+        acutPrintf(L"\nFile selection cancelled.");
+        return;
+    }
+
+    std::wstring ws(filePath);
     std::string path(ws.begin(), ws.end());
 
     auto rows = CSVParser::Parse(path);
@@ -44,23 +61,24 @@ void cmdImportPipes()
 
     for (size_t i = 1; i < rows.size(); ++i)
     {
-        if (rows[i].size() < 8)
+        if (rows[i].size() < 5)
             continue;
 
         try
         {
-            double x1 = std::stod(rows[i][2]);
-            double y1 = std::stod(rows[i][3]);
-            double z1 = std::stod(rows[i][4]);
+            int usNode = std::stoi(rows[i][3]);
+            int dsNode = std::stoi(rows[i][4]);
 
-            double x2 = std::stod(rows[i][5]);
-            double y2 = std::stod(rows[i][6]);
-            double z2 = std::stod(rows[i][7]);
+            if (g_NodeMap.find(usNode) == g_NodeMap.end())
+                continue;
 
-            AcDbLine* pLine = new AcDbLine(
-                AcGePoint3d(x1, y1, z1),
-                AcGePoint3d(x2, y2, z2));
+            if (g_NodeMap.find(dsNode) == g_NodeMap.end())
+                continue;
 
+            AcGePoint3d pt1 = g_NodeMap[usNode];
+            AcGePoint3d pt2 = g_NodeMap[dsNode];
+
+            AcDbLine* pLine = new AcDbLine(pt1, pt2);
             pModelSpace->appendAcDbEntity(pLine);
             pLine->close();
         }

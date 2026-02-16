@@ -145,6 +145,7 @@
     <ClCompile Include="Command_ImportPipes.cpp" />
     <ClCompile Include="Command_ValidateNetwork.cpp" />
     <ClCompile Include="EntryPoint.cpp" />
+    <ClCompile Include="Global_Data.cpp" />
     <ClCompile Include="Import_CSVParser.cpp" />
     <ClCompile Include="Import_NetworkImporter.cpp" />
     <ClCompile Include="Import_NodeImporter.cpp" />
@@ -170,6 +171,7 @@
     <ClInclude Include="Domain_WSNode.h" />
     <ClInclude Include="Domain_WSPipe.h" />
     <ClInclude Include="EntryPoint.h" />
+    <ClInclude Include="Global_Data.h" />
     <ClInclude Include="Import_CSVParser.h" />
     <ClInclude Include="Import_NetworkImporter.h" />
     <ClInclude Include="Import_NodeImporter.h" />
