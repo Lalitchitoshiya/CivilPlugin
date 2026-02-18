@@ -154,6 +154,7 @@
     <ClCompile Include="Logging_Logger.cpp" />
     <ClCompile Include="Mapping_ConfigLoader.cpp" />
     <ClCompile Include="Mapping_PartMappingEngine.cpp" />
+    <ClCompile Include="Pressurenetworkbridge.cpp" />
     <ClCompile Include="Utils_FileUtils.cpp" />
     <ClCompile Include="Utils_GeometryUtils.cpp" />
     <ClCompile Include="Utils_StringUtils.cpp" />
@@ -179,6 +180,7 @@
     <ClInclude Include="Logging_Logger.h" />
     <ClInclude Include="Mapping_Models.h" />
     <ClInclude Include="Mapping_PartMappingEngine.h" />
+    <ClInclude Include="Pressurenetworkbridge.h" />
     <ClInclude Include="Utils_StringUtils.h" />
     <ClInclude Include="Utils_UnitConverter.h" />
   </ItemGroup>
