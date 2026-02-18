@@ -3,6 +3,8 @@
 void cmdImportNodes();
 void cmdImportPipes();
 
+void cmdCreateProfile();
+
 void WSProApp::RegisterCommands()
 {
     acedRegCmds->addCommand(
@@ -18,6 +20,14 @@ void WSProApp::RegisterCommands()
         L"WSPROIMPORTPIPES",
         ACRX_CMD_MODAL,
         cmdImportPipes);
+
+
+    acedRegCmds->addCommand(
+        L"WSPRO_CMDS",
+        L"WSPROCREATEPROFILE",
+        L"WSPROCREATEPROFILE",
+        ACRX_CMD_MODAL,
+        cmdCreateProfile);
 }
 
 void WSProApp::UnregisterCommands()
