@@ -47,11 +47,12 @@ extern "C"
 }
 
 // ── Step 2: ARX headers (may now load acad_windows.h safely) ──
-#include "PressureNetworkBridge.h"   // pulls adscodes.h → acad_windows.h
+#include "PressureNetworkBridge.h" // pulls adscodes.h → acad_windows.h
 #include <aced.h>                    // acedCommandS
 #include <acedads.h>                 // resbuf
 #include <acutads.h>                 // acutPrintf
-
+#include "aced.h"  
+#include <acedCmdNF.h>   // ← this was the missing include
 // ── Step 3: Standard library ──────────────────────────────────
 #include <map>
 #include <algorithm>
