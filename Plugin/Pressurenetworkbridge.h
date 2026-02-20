@@ -2,6 +2,7 @@
 
 // ObjectARX core headers — adjust paths to match your ARX SDK location
 #include <adscodes.h>   // RTNORM, RTSTR, RTNONE, RTLB
+//#include "adscodes.h"   // RTNORM, RTSTR, RTNONE, RTLB
 #include <string>
 #include <vector>
 #include <fstream>
