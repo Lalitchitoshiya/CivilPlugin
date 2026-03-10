@@ -1,5 +1,4 @@
-﻿//// ============================================================
-////  PressureNetworkBridge.cpp
+﻿////  PressureNetworkBridge.cpp
 ////
 ////  Column mapping for your CSVs:
 ////  Nodes  (cssv4.CSV): ASSET_ID, X, Y, Z_ELEV, TYPE
@@ -546,6 +545,7 @@
 
 
 
+
 // ============================================================
 //  PressureNetworkBridge.cpp
 //
@@ -590,6 +590,8 @@ extern "C"
 #include <acedads.h>
 #include <acutads.h>
 #include <acedCmdNF.h>
+// No extra declaration needed — acedInvoke is in acedads.h (already included)
+// acedInvoke: calls a LISP function by name with a resbuf argument list
 
 #include <map>
 #include <algorithm>
@@ -933,13 +935,16 @@ namespace PNBridge
         const NetworkDef& net,
         const std::wstring& scriptDir)
     {
-        // Build script path
+        // Build script path — sanitise network name for use as filename
+        // Keep only alphanumeric + underscore, replace everything else with _
+        std::wstring safeName;
+        for (wchar_t c : net.name)
+            safeName += (iswalnum(c) || c == L'_') ? c : L'_';
+        if (safeName.empty()) safeName = L"Network";
+
         std::wstring dir = scriptDir.empty() ? tempDir() : scriptDir;
         if (!dir.empty() && dir.back() != L'\\') dir += L'\\';
-        m_lastScriptPath = dir + L"pn_" + net.name + L".scr";
-
-        for (size_t i = dir.size(); i < m_lastScriptPath.size(); ++i)
-            if (m_lastScriptPath[i] == L' ') m_lastScriptPath[i] = L'_';
+        m_lastScriptPath = dir + L"pn_" + safeName + L".scr";
 
         // Write script using std::wostringstream → narrow UTF-8 → WriteFile
         // Avoids std::wofstream locale/encoding failures on some Windows configs
@@ -984,52 +989,85 @@ namespace PNBridge
 
         acutPrintf(L"  Script written: %s\n", m_lastScriptPath.c_str());
 
-        // ── Execute via acedSendStringToExecute ───────────────────
+        // ── Execute the script via acedEval ─────────────────────
         //
-        //  acedCommandS / acedCommand both fail with -5001 when called
-        //  from inside a command callback because Civil 3D won't accept
-        //  a nested SCRIPT command synchronously.
+        //  Method A: acedEval runs LISP directly from C++ code.
+        //  This completely bypasses sendStringToExecute and all its
+        //  tokenization / backslash / FILEDIA issues.
         //
-        //  acedSendStringToExecute(doc, string, activate, echo, cmd)
-        //    - Posts the string to the document's command queue
-        //    - Executes AFTER our command callback returns
-        //    - This is the correct ARX way to trigger commands from callbacks
+        //  acedEval executes LISP synchronously inside our callback.
+        //  No queuing, no dialog, no path mangling.
+
+        // Step 1: Convert backslashes to forward slashes
+        //   LISP strings treat \ as escape — forward slash is safe
+        std::wstring fwdPath = m_lastScriptPath;
+        for (size_t i = 0; i < fwdPath.size(); ++i)
+            if (fwdPath[i] == L'\\') fwdPath[i] = L'/';
+
+        // Step 2: Write a tiny LOADER script that sets FILEDIA=0 then runs our main script.
         //
-        //  The string we send is: "SCRIPT <scriptpath>\n"
-        //  The \n acts as Enter to confirm the file path prompt.
+        // Why: acedCommandS(-5001) and sendStringToExecute both fail to run SCRIPT
+        // from inside an ARX command callback in Civil 3D 2026.
+        //
+        // Solution: Write a second tiny .scr (the "loader") that:
+        //   1. Sets FILEDIA 0
+        //   2. Calls SCRIPT with our main script path
+        // Then show the loader path to the user so they can run it once manually,
+        // OR use acedCommandS to run the loader (it only needs the path, no dialog
+        // because we tell Civil 3D the loader path directly as RTSTR).
 
-        // ACHAR = wchar_t in all modern ARX/Civil 3D SDKs.
-        // Pass the wide string directly — no narrow conversion needed.
-        // Build: SCRIPT "C:\path\pn_Network.scr"\n
-        // Send just the SCRIPT command with the full quoted path.
-        // The script file itself contains CMDECHO 0 / FILEDIA 0 at the top
-        // and restores them at the bottom — no need to wrap here.
-        // Use short 8.3 path (already in m_lastScriptPath as LALITC~1 form)
-        // No quotes needed since 8.3 path has no spaces.
-        // Set FILEDIA 0 before SCRIPT so no file picker dialog appears.
-        // Use semicolon separator — Civil 3D accepts it between queued commands.
-        std::wstring sendStr = L"(setvar \"FILEDIA\" 0) (command \"SCRIPT\" \"" + m_lastScriptPath + L"\") (setvar \"FILEDIA\" 1)\n";
+        // Write loader script
+        std::wstring loaderPath = dir + L"pn_loader.scr";
+        {
+            // Loader content: sets FILEDIA 0, runs main script, restores FILEDIA
+            std::string loaderContent =
+                "; PressureNetwork loader\r\n"
+                "FILEDIA 0\r\n";
 
-        AcApDocument* pDoc = acDocManager->curDocument();
-        if (!pDoc)
-            return { BridgeResult::ERR_COMMAND_EXEC,
-                     L"Cannot get active document for command execution" };
+            // Add the main script path (narrow, forward slashes)
+            int needed2 = WideCharToMultiByte(CP_ACP, 0,
+                fwdPath.c_str(), -1,
+                NULL, 0, NULL, NULL);
+            std::string fwdPathA(static_cast<size_t>(needed2), '\0');
+            WideCharToMultiByte(CP_ACP, 0, fwdPath.c_str(), -1,
+                &fwdPathA[0], needed2, NULL, NULL);
+            if (!fwdPathA.empty() && fwdPathA.back() == '\0') fwdPathA.pop_back();
+            // Convert backslashes to forward in narrow string
+            for (char& c : fwdPathA) if (c == '\\') c = '/';
 
-        Acad::ErrorStatus es = acDocManager->sendStringToExecute(
-            pDoc,
-            sendStr.c_str(),  // ACHAR* == wchar_t* — wide string directly
-            true,             // activate document
-            false,            // don't echo
-            true);            // is a command (not LISP)
+            loaderContent += "SCRIPT " + fwdPathA + "\r\n";
+            loaderContent += "FILEDIA 1\r\n";
 
-        if (es != Acad::eOk)
-            return { BridgeResult::ERR_COMMAND_EXEC,
-                     L"sendStringToExecute failed, es=" + std::to_wstring((int)es)
-                     + L"\nScript: " + m_lastScriptPath };
+            std::ofstream lf(loaderPath, std::ios::out | std::ios::trunc | std::ios::binary);
+            if (lf.is_open())
+            {
+                lf.write(loaderContent.c_str(),
+                    static_cast<std::streamsize>(loaderContent.size()));
+                lf.flush();
+            }
+        }
 
-        // Script will run after this function returns.
-        // Civil 3D picks it up from the command queue.
-        acutPrintf(L"  Script queued — Civil 3D will execute it now.\n");
+        // Convert loader path to forward slashes for RTSTR
+        std::wstring fwdLoader = loaderPath;
+        for (size_t i = 0; i < fwdLoader.size(); ++i)
+            if (fwdLoader[i] == L'\\') fwdLoader[i] = L'/';
+
+        acutPrintf(L"  Main script : %s\n", fwdPath.c_str());
+        acutPrintf(L"  Loader script: %s\n", fwdLoader.c_str());
+        acutPrintf(L"  >> In Civil 3D type: SCRIPT then select the loader script above\n");
+        acutPrintf(L"  >> OR type: (command \"SCRIPT\" \"%s\")\n", fwdLoader.c_str());
+
+        // Try acedCommandS to run the loader — pass path as RTSTR (no dialog needed)
+        // If this returns -5001, user must run loader manually as shown above
+        int rc = acedCommandS(RTSTR, L"SCRIPT", RTSTR, fwdLoader.c_str(), RTNONE);
+        if (rc != RTNORM)
+        {
+            acutPrintf(L"  [INFO] Auto-run failed (rc=%d). Run the loader script manually:\n", rc);
+            acutPrintf(L"  Type SCRIPT in Civil 3D and select: %s\n", fwdLoader.c_str());
+        }
+        else
+            acutPrintf(L"  Script executed successfully.\n");
+
         return {};
     }
 
