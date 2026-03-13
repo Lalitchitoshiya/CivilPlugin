@@ -1,4 +1,4 @@
-﻿
+
 
 
 // ============================================================
@@ -45,6 +45,7 @@ extern "C"
 #include <acedads.h>
 #include <acutads.h>
 #include <acedCmdNF.h>
+#include <acdocman.h>
 // No extra declaration needed — acedInvoke is in acedads.h (already included)
 // acedInvoke: calls a LISP function by name with a resbuf argument list
 
@@ -54,6 +55,11 @@ extern "C"
 #include <sstream>
 #include <iomanip>
 #include <fstream>
+
+// Late-bound Civil 3D COM (no TLB) — used to create/get pressure network.
+#include <Windows.h>
+#include <objbase.h>
+#include <oleauto.h>
 
 // ─────────────────────────────────────────────────────────────
 //  Helpers
@@ -96,6 +102,336 @@ static int resolveCol(const std::map<std::wstring, int>& col,
         if (it != col.end()) return it->second;
     }
     return -1;
+}
+
+// ─────────────────────────────────────────────────────────────
+//  Civil 3D COM helpers (late-bound, best-effort)
+// ─────────────────────────────────────────────────────────────
+
+static bool ComGetDispId(IDispatch* disp, const wchar_t* name, DISPID& outId)
+{
+    if (!disp) return false;
+    OLECHAR* names[1] = { const_cast<wchar_t*>(name) };
+    return SUCCEEDED(disp->GetIDsOfNames(IID_NULL, names, 1, LOCALE_USER_DEFAULT, &outId));
+}
+
+static bool ComInvokeGet(IDispatch* disp, DISPID id, VARIANT& result)
+{
+    if (!disp) return false;
+    DISPPARAMS params = { nullptr, nullptr, 0, 0 };
+    VariantInit(&result);
+    return SUCCEEDED(disp->Invoke(id, IID_NULL, LOCALE_USER_DEFAULT, DISPATCH_PROPERTYGET,
+        &params, &result, nullptr, nullptr));
+}
+
+static bool ComInvokeMethod(IDispatch* disp, DISPID id, VARIANTARG* args, int argc, VARIANT* outResult)
+{
+    if (!disp) return false;
+    DISPPARAMS params;
+    params.rgvarg = args;
+    params.rgdispidNamedArgs = nullptr;
+    params.cArgs = argc;
+    params.cNamedArgs = 0;
+    VARIANT local;
+    VARIANT* target = outResult ? outResult : &local;
+    VariantInit(target);
+    HRESULT hr = disp->Invoke(id, IID_NULL, LOCALE_USER_DEFAULT, DISPATCH_METHOD,
+        &params, target, nullptr, nullptr);
+    if (!outResult) VariantClear(&local);
+    return SUCCEEDED(hr);
+}
+
+static bool ComGetPropDisp(IDispatch* disp, const wchar_t* propName, IDispatch** out)
+{
+    if (!out) return false;
+    *out = nullptr;
+    DISPID id;
+    if (!ComGetDispId(disp, propName, id)) return false;
+    VARIANT v;
+    if (!ComInvokeGet(disp, id, v)) return false;
+    if (v.vt == VT_DISPATCH && v.pdispVal)
+    {
+        *out = v.pdispVal;
+        (*out)->AddRef();
+        VariantClear(&v);
+        return true;
+    }
+    VariantClear(&v);
+    return false;
+}
+
+static bool ComCall_ItemByName(IDispatch* collection, const std::wstring& name, IDispatch** outItem)
+{
+    if (!outItem) return false;
+    *outItem = nullptr;
+    DISPID itemId;
+    if (!ComGetDispId(collection, L"Item", itemId)) return false;
+
+    VARIANTARG arg;
+    VariantInit(&arg);
+    arg.vt = VT_BSTR;
+    arg.bstrVal = SysAllocString(name.c_str());
+
+    VARIANT result;
+    bool ok = ComInvokeMethod(collection, itemId, &arg, 1, &result);
+    SysFreeString(arg.bstrVal);
+    if (!ok) return false;
+
+    if (result.vt == VT_DISPATCH && result.pdispVal)
+    {
+        *outItem = result.pdispVal;
+        (*outItem)->AddRef();
+        VariantClear(&result);
+        return true;
+    }
+    VariantClear(&result);
+    return false;
+}
+
+static bool ComCall_AddWithName(IDispatch* collection, const std::wstring& name, IDispatch** outItem)
+{
+    if (!outItem) return false;
+    *outItem = nullptr;
+    DISPID addId;
+    if (!ComGetDispId(collection, L"Add", addId)) return false;
+
+    VARIANTARG arg;
+    VariantInit(&arg);
+    arg.vt = VT_BSTR;
+    arg.bstrVal = SysAllocString(name.c_str());
+
+    VARIANT result;
+    bool ok = ComInvokeMethod(collection, addId, &arg, 1, &result);
+    SysFreeString(arg.bstrVal);
+    if (!ok) return false;
+
+    if (result.vt == VT_DISPATCH && result.pdispVal)
+    {
+        *outItem = result.pdispVal;
+        (*outItem)->AddRef();
+        VariantClear(&result);
+        return true;
+    }
+    VariantClear(&result);
+    return false;
+}
+
+static bool ComEnsurePressureNetwork(const std::wstring& netName, IDispatch** outNet, std::wstring& outErr)
+{
+    if (!outNet) return false;
+    *outNet = nullptr;
+
+    HRESULT hrInit = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    const bool didInit = SUCCEEDED(hrInit);
+
+    auto getActiveDispatchByProgId = [&](const wchar_t* progId, IDispatch** outDisp) -> bool
+        {
+            if (!outDisp) return false;
+            *outDisp = nullptr;
+            CLSID clsid;
+            HRESULT hr = CLSIDFromProgID(progId, &clsid);
+            if (FAILED(hr)) return false;
+            IDispatch* disp = nullptr;
+            hr = GetActiveObject(clsid, nullptr, (IUnknown**)&disp);
+            if (FAILED(hr) || !disp) return false;
+            *outDisp = disp;
+            return true;
+        };
+
+    auto callGetInterfaceObject = [&](IDispatch* acadApp, const wchar_t* ifaceProgId, IDispatch** outDisp) -> bool
+        {
+            if (!outDisp) return false;
+            *outDisp = nullptr;
+            if (!acadApp) return false;
+
+            DISPID mid;
+            if (!ComGetDispId(acadApp, L"GetInterfaceObject", mid)) return false;
+
+            VARIANTARG arg;
+            VariantInit(&arg);
+            arg.vt = VT_BSTR;
+            arg.bstrVal = SysAllocString(ifaceProgId);
+
+            VARIANT result;
+            bool ok = ComInvokeMethod(acadApp, mid, &arg, 1, &result);
+            SysFreeString(arg.bstrVal);
+            if (!ok) { VariantClear(&result); return false; }
+
+            if (result.vt == VT_DISPATCH && result.pdispVal)
+            {
+                *outDisp = result.pdispVal;
+                (*outDisp)->AddRef();
+                VariantClear(&result);
+                return true;
+            }
+            VariantClear(&result);
+            return false;
+        };
+
+    // 1) Try direct Civil 3D application progids
+    IDispatch* aeccApp = nullptr;
+    const wchar_t* civilProgIds[] = {
+        L"AeccXUiLand.AeccApplication",
+        L"AeccXUiLand.AeccApplication.13.8",
+        L"AeccXUiLand.AeccApplication.13.7",
+        L"AeccXUiLand.AeccApplication.13.6",
+    };
+    for (const auto* pid : civilProgIds)
+    {
+        if (getActiveDispatchByProgId(pid, &aeccApp)) break;
+    }
+
+    // 2) If that fails, go through the running AutoCAD.Application and ask for Civil 3D interface.
+    if (!aeccApp)
+    {
+        IDispatch* acadApp = nullptr;
+        const wchar_t* acadProgIds[] = {
+            L"AutoCAD.Application",
+            L"AutoCAD.Application.25",
+            L"AutoCAD.Application.25.1",
+            L"AutoCAD.Application.25.0",
+        };
+        for (const auto* pid : acadProgIds)
+        {
+            if (getActiveDispatchByProgId(pid, &acadApp)) break;
+        }
+
+        if (acadApp)
+        {
+            // This is the typical robust path inside Civil 3D.
+            if (!callGetInterfaceObject(acadApp, L"AeccXUiLand.AeccApplication", &aeccApp))
+                callGetInterfaceObject(acadApp, L"AeccXUiRoadway.AeccApplication", &aeccApp);
+            acadApp->Release();
+        }
+    }
+
+    if (!aeccApp)
+    {
+        outErr = L"COM: Civil 3D application object not available (direct or via AutoCAD.GetInterfaceObject).";
+        if (didInit) CoUninitialize();
+        return false;
+    }
+
+    IDispatch* doc = nullptr;
+    {
+        DISPID id;
+        VARIANT v;
+        if (!ComGetDispId(aeccApp, L"ActiveDocument", id) || !ComInvokeGet(aeccApp, id, v) ||
+            v.vt != VT_DISPATCH || !v.pdispVal)
+        {
+            outErr = L"COM: Cannot get ActiveDocument.";
+            VariantClear(&v);
+            aeccApp->Release();
+            if (didInit) CoUninitialize();
+            return false;
+        }
+        doc = v.pdispVal;
+        doc->AddRef();
+        VariantClear(&v);
+    }
+
+    IDispatch* nets = nullptr;
+    if (!ComGetPropDisp(doc, L"PressureNetworks", &nets))
+    {
+        outErr = L"COM: ActiveDocument.PressureNetworks not available.";
+        doc->Release();
+        aeccApp->Release();
+        if (didInit) CoUninitialize();
+        return false;
+    }
+
+    IDispatch* net = nullptr;
+    if (!ComCall_ItemByName(nets, netName, &net))
+    {
+        if (!ComCall_AddWithName(nets, netName, &net))
+        {
+            outErr = L"COM: Failed to get/create pressure network (Item/Add).";
+            nets->Release();
+            doc->Release();
+            aeccApp->Release();
+            if (didInit) CoUninitialize();
+            return false;
+        }
+    }
+
+    *outNet = net; // already AddRef'd
+    nets->Release();
+    doc->Release();
+    aeccApp->Release();
+    if (didInit) CoUninitialize();
+    return true;
+}
+
+static SAFEARRAY* ComMakePointArray(double x, double y, double z)
+{
+    SAFEARRAYBOUND b;
+    b.lLbound = 0;
+    b.cElements = 3;
+    SAFEARRAY* sa = SafeArrayCreate(VT_R8, 1, &b);
+    if (!sa) return nullptr;
+    double v[3] = { x, y, z };
+    for (LONG i = 0; i < 3; ++i)
+        SafeArrayPutElement(sa, &i, &v[i]);
+    return sa;
+}
+
+static bool ComTryAddPipeBestEffort(IDispatch* pressureNetwork,
+    const PNBridge::PipeNode& s,
+    const PNBridge::PipeNode& e,
+    std::wstring& outErr)
+{
+    // Try 1: pressureNetwork.Pipes.Add(startPointArray, endPointArray)
+    // Try 2: pressureNetwork.AddPipe(startPointArray, endPointArray)
+    // (COM model varies by version/config; if unsupported we return false)
+    if (!pressureNetwork) return false;
+
+    auto tryCall = [&](IDispatch* target, const wchar_t* method) -> bool
+        {
+            DISPID mid;
+            if (!ComGetDispId(target, method, mid)) return false;
+
+            SAFEARRAY* saS = ComMakePointArray(s.x, s.y, s.z);
+            SAFEARRAY* saE = ComMakePointArray(e.x, e.y, e.z);
+            if (!saS || !saE)
+            {
+                if (saS) SafeArrayDestroy(saS);
+                if (saE) SafeArrayDestroy(saE);
+                return false;
+            }
+
+            VARIANTARG args[2];
+            VariantInit(&args[0]);
+            VariantInit(&args[1]);
+
+            // reverse order
+            args[0].vt = VT_ARRAY | VT_R8;
+            args[0].parray = saE;
+            args[1].vt = VT_ARRAY | VT_R8;
+            args[1].parray = saS;
+
+            VARIANT res;
+            bool ok = ComInvokeMethod(target, mid, args, 2, &res);
+            VariantClear(&res);
+
+            SafeArrayDestroy(saS);
+            SafeArrayDestroy(saE);
+            return ok;
+        };
+
+    // Pipes collection path
+    IDispatch* pipes = nullptr;
+    if (ComGetPropDisp(pressureNetwork, L"Pipes", &pipes))
+    {
+        bool ok = tryCall(pipes, L"Add");
+        pipes->Release();
+        if (ok) return true;
+    }
+
+    // Direct method path
+    if (tryCall(pressureNetwork, L"AddPipe")) return true;
+
+    outErr = L"COM: Pipe creation method not found (Pipes.Add / AddPipe).";
+    return false;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -390,6 +726,21 @@ namespace PNBridge
         const NetworkDef& net,
         const std::wstring& scriptDir)
     {
+        // Step 0: Ensure the Pressure Network exists (no manual creation).
+        // We use Civil 3D COM for this because Civil 3D 2026 commands are hard to automate.
+        {
+            IDispatch* comNet = nullptr;
+            std::wstring comErr;
+            if (!ComEnsurePressureNetwork(net.name, &comNet, comErr))
+            {
+                acutPrintf(L"  [WARN] %s\n", comErr.c_str());
+            }
+            else
+            {
+                comNet->Release();
+            }
+        }
+
         // Build script path — sanitise network name for use as filename
         // Keep only alphanumeric + underscore, replace everything else with _
         std::wstring safeName;
@@ -444,84 +795,51 @@ namespace PNBridge
 
         acutPrintf(L"  Script written: %s\n", m_lastScriptPath.c_str());
 
-        // ── Execute the script via acedEval ─────────────────────
-        //
-        //  Method A: acedEval runs LISP directly from C++ code.
-        //  This completely bypasses sendStringToExecute and all its
-        //  tokenization / backslash / FILEDIA issues.
-        //
-        //  acedEval executes LISP synchronously inside our callback.
-        //  No queuing, no dialog, no path mangling.
-
-        // Step 1: Convert backslashes to forward slashes
-        //   LISP strings treat \ as escape — forward slash is safe
-        std::wstring fwdPath = m_lastScriptPath;
-        for (size_t i = 0; i < fwdPath.size(); ++i)
-            if (fwdPath[i] == L'\\') fwdPath[i] = L'/';
-
-        // Step 2: Write a tiny LOADER script that sets FILEDIA=0 then runs our main script.
-        //
-        // Why: acedCommandS(-5001) and sendStringToExecute both fail to run SCRIPT
-        // from inside an ARX command callback in Civil 3D 2026.
-        //
-        // Solution: Write a second tiny .scr (the "loader") that:
-        //   1. Sets FILEDIA 0
-        //   2. Calls SCRIPT with our main script path
-        // Then show the loader path to the user so they can run it once manually,
-        // OR use acedCommandS to run the loader (it only needs the path, no dialog
-        // because we tell Civil 3D the loader path directly as RTSTR).
-
-        // Write loader script
-        std::wstring loaderPath = dir + L"pn_loader.scr";
+        // Step 1: Try creating pipes via COM (best-effort).
+        // If pipe creation is not exposed in this COM model, we'll fall back to script/command.
+        bool createdViaCom = false;
         {
-            // Loader content: sets FILEDIA 0, runs main script, restores FILEDIA
-            std::string loaderContent =
-                "; PressureNetwork loader\r\n"
-                "FILEDIA 0\r\n";
-
-            // Add the main script path (narrow, forward slashes)
-            int needed2 = WideCharToMultiByte(CP_ACP, 0,
-                fwdPath.c_str(), -1,
-                NULL, 0, NULL, NULL);
-            std::string fwdPathA(static_cast<size_t>(needed2), '\0');
-            WideCharToMultiByte(CP_ACP, 0, fwdPath.c_str(), -1,
-                &fwdPathA[0], needed2, NULL, NULL);
-            if (!fwdPathA.empty() && fwdPathA.back() == '\0') fwdPathA.pop_back();
-            // Convert backslashes to forward in narrow string
-            for (char& c : fwdPathA) if (c == '\\') c = '/';
-
-            loaderContent += "SCRIPT " + fwdPathA + "\r\n";
-            loaderContent += "FILEDIA 1\r\n";
-
-            std::ofstream lf(loaderPath, std::ios::out | std::ios::trunc | std::ios::binary);
-            if (lf.is_open())
+            IDispatch* comNet = nullptr;
+            std::wstring comErr;
+            if (ComEnsurePressureNetwork(net.name, &comNet, comErr))
             {
-                lf.write(loaderContent.c_str(),
-                    static_cast<std::streamsize>(loaderContent.size()));
-                lf.flush();
+                bool any = false;
+                bool all = true;
+                for (const auto& seg : net.segments)
+                {
+                    const PipeNode* s = findNode(net, seg.startNode);
+                    const PipeNode* e = findNode(net, seg.endNode);
+                    if (!s || !e) continue;
+                    any = true;
+                    std::wstring perr;
+                    if (!ComTryAddPipeBestEffort(comNet, *s, *e, perr))
+                    {
+                        all = false;
+                        break;
+                    }
+                }
+                createdViaCom = any && all;
+                comNet->Release();
             }
         }
 
-        // Convert loader path to forward slashes for RTSTR
-        std::wstring fwdLoader = loaderPath;
-        for (size_t i = 0; i < fwdLoader.size(); ++i)
-            if (fwdLoader[i] == L'\\') fwdLoader[i] = L'/';
-
-        acutPrintf(L"  Main script : %s\n", fwdPath.c_str());
-        acutPrintf(L"  Loader script: %s\n", fwdLoader.c_str());
-        acutPrintf(L"  >> In Civil 3D type: SCRIPT then select the loader script above\n");
-        acutPrintf(L"  >> OR type: (command \"SCRIPT\" \"%s\")\n", fwdLoader.c_str());
-
-        // Try acedCommandS to run the loader — pass path as RTSTR (no dialog needed)
-        // If this returns -5001, user must run loader manually as shown above
-        int rc = acedCommandS(RTSTR, L"SCRIPT", RTSTR, fwdLoader.c_str(), RTNONE);
-        if (rc != RTNORM)
+        if (createdViaCom)
         {
-            acutPrintf(L"  [INFO] Auto-run failed (rc=%d). Run the loader script manually:\n", rc);
-            acutPrintf(L"  Type SCRIPT in Civil 3D and select: %s\n", fwdLoader.c_str());
+            acutPrintf(L"  Created pressure pipes via COM.\n");
+            return {};
         }
-        else
-            acutPrintf(L"  Script executed successfully.\n");
+
+        // Step 2: Queue SCRIPT execution after our command returns (fixes -5001).
+        // Use forward slashes to avoid escaping issues.
+        std::wstring fwdPath = m_lastScriptPath;
+        for (auto& c : fwdPath) if (c == L'\\') c = L'/';
+
+        std::wstring cmd = L"(command \"_.FILEDIA\" \"0\" \"_.SCRIPT\" \"" + fwdPath + L"\" \"_.FILEDIA\" \"1\")\n";
+        // Queue for execution after our command fully finishes.
+        // bActivate=false + bWrapUpInactiveDoc=true prevents our queued input
+        // from being consumed by any still-active prompt in this command.
+        acDocManager->sendStringToExecute(acDocManager->curDocument(), cmd.c_str(), false, true, false);
+        acutPrintf(L"  Queued script execution.\n");
 
         return {};
     }
